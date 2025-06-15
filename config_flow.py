@@ -10,8 +10,10 @@ from homeassistant.const import CONF_HOST, CONF_PORT
 
 from . import config_flow
 from .const import DEFAULT_PORT, DOMAIN, TIMEOUT
+from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 _LOGGER = logging.getLogger(__name__)
+
 
 @config_entries.HANDLERS.register(DOMAIN)
 class AirTouch3ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
@@ -42,7 +44,7 @@ class AirTouch3ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
         try:
             _LOGGER.debug("create_device")
-            session = self.hass.helpers.aiohttp_client.async_get_clientsession()
+            session = async_get_clientsession(self.hass)
             with timeout(TIMEOUT):
                 _LOGGER.debug("Call vzduch")
                 device = Vzduch(session, host, port, timeout)
@@ -72,11 +74,10 @@ class AirTouch3ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
         return self._async_get_entry(user_input)
 
-
     async def create_device(self, host, port=DEFAULT_PORT):
         try:
             _LOGGER.debug("create_device")
-            session = self.hass.helpers.aiohttp_client.async_get_clientsession()
+            session = async_get_clientsession(self.hass)
             with timeout(TIMEOUT):
                 _LOGGER.debug("Call vzduch")
                 device = await Vzduch(session, host, port, timeout)
@@ -102,10 +103,10 @@ class AirTouch3ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             )
 
         return self._async_get_entry({
-                CONF_HOST: host,
-                CONF_PORT: port
-            })
- 
+            CONF_HOST: host,
+            CONF_PORT: port
+        })
+
     @property
     def schema(self):
         """Return current schema."""
