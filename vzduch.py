@@ -297,6 +297,12 @@ class Vzduch:
     async def set_mode(self, to_mode):
         """Set the AC Mode (Heat / Cool, etc.)"""
         _LOGGER.debug(f"[Vzduch] set_mode to_mode {to_mode}")
+
+        if to_mode == -1:
+            # Instead of setting mode to -1, turn off the power
+            await self.power_switch(AC_POWER_OFF)
+            return
+
         command = POST_AC_MODE.format(self._selected_ac , to_mode)
         response = await self.prep_fetch(HTTP_POST, command)
         self.set_properties(response)
