@@ -109,7 +109,7 @@ TARGET_TEMPERATURE_STEP = 1
 
 SUPPORTED_FEATURES = \
     ClimateEntityFeature.TARGET_TEMPERATURE | \
-    ClimateEntityFeature.FAN_MODE 
+    ClimateEntityFeature.FAN_MODE
 
 CLIMATE_ICON = "mdi:home-variant-outline"
 
@@ -230,6 +230,36 @@ async def async_setup_entry(hass, entry, async_add_entities):
 
         await vzduch_api.zone_switch(zone_id, to_state)
 
+    # Register custom handlers for turn_on and turn_off services
+    async def handle_climate_turn_on(call):
+        """Handle climate.turn_on service for AirTouch3 entities."""
+        entity_ids = call.data.get("entity_id", [])
+        if not entity_ids:
+            return
+
+        _LOGGER.debug(f"[AT3Climate] Custom climate.turn_on handler called for {entity_ids}")
+        entities = [entity for entity in hass.data.get("climate", {}).entities
+                    if entity.entity_id in entity_ids and isinstance(entity, AirTouch3Climate)]
+
+        for entity in entities:
+            await entity.async_turn_on()
+
+    async def handle_climate_turn_off(call):
+        """Handle climate.turn_off service for AirTouch3 entities."""
+        entity_ids = call.data.get("entity_id", [])
+        if not entity_ids:
+            return
+
+        _LOGGER.debug(f"[AT3Climate] Custom climate.turn_off handler called for {entity_ids}")
+        entities = [entity for entity in hass.data.get("climate", {}).entities
+                    if entity.entity_id in entity_ids and isinstance(entity, AirTouch3Climate)]
+
+        for entity in entities:
+            await entity.async_turn_off()
+
+    # Register our custom handlers for the climate domain services
+    hass.services.async_register("climate", "turn_on", handle_climate_turn_on)
+    hass.services.async_register("climate", "turn_off", handle_climate_turn_off)
     hass.services.async_register(AT3_DOMAIN, "set_zone_temperature", handle_set_zone_temperature)
     hass.services.async_register(AT3_DOMAIN, "set_zone_damper", handle_set_zone_damper)
     hass.services.async_register(AT3_DOMAIN, "zone_switch", handle_zone_switch)
