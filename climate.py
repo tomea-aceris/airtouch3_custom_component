@@ -150,7 +150,73 @@ async def async_setup_entry(hass, entry, async_add_entities):
                 _LOGGER.warning(f"[AT3Climate.handle_set_zone_temperature] Desired Temperature for zone id {zone_id} cannot be set. Zone is non temperature controlled")
                 break
 
+    async def handle_set_zone_damper(call):
+        """Handle setting a zone's damper percentage."""
+        _LOGGER.debug(f"[AT3Climate.handle_set_zone_damper] Call Data [{call}]")
+
+        percentage = call.data.get('percentage')
+        if percentage is None:
+            _LOGGER.warning(f"[AT3Climate.handle_set_zone_damper] Percentage not specified")
+            return
+
+        if type(percentage) != int:
+            _LOGGER.warning(f"[AT3Climate.handle_set_zone_damper] Percentage must be a whole positive number")
+            return
+
+        if percentage < 0 or percentage > 100:
+            _LOGGER.warning(f"[AT3Climate.handle_set_zone_damper] Percentage out of range. Valid range is 0 to 100 percent: {percentage}")
+            return
+
+        entity_id = call.data.get('entity_id')
+        if entity_id is None:
+            _LOGGER.warning(f"[AT3Climate.handle_set_zone_damper] entity_id not specified")
+            return
+
+        entity_item = hass.states.get(entity_id)
+        if entity_item is None:
+            _LOGGER.warning(f"[AT3Climate.handle_set_zone_damper] Entity not found {entity_id}")
+            return
+
+        zone_id = entity_item.attributes.get('id')
+        if zone_id is None:
+            _LOGGER.warning(f"[AT3Climate.handle_set_zone_damper] Entity does not have id attribute {entity_item}")
+            return
+
+        await vzduch_api.set_zone_damper(zone_id, percentage)
+
+    async def handle_zone_switch(call):
+        """Handle switching a zone on or off."""
+        _LOGGER.debug(f"[AT3Climate.handle_zone_switch] Call Data [{call}]")
+
+        to_state = call.data.get('to_state')
+        if to_state is None:
+            _LOGGER.warning(f"[AT3Climate.handle_zone_switch] to_state not specified")
+            return
+
+        if type(to_state) != int or to_state not in [0, 1]:
+            _LOGGER.warning(f"[AT3Climate.handle_zone_switch] to_state must be 0 (off) or 1 (on)")
+            return
+
+        entity_id = call.data.get('entity_id')
+        if entity_id is None:
+            _LOGGER.warning(f"[AT3Climate.handle_zone_switch] entity_id not specified")
+            return
+
+        entity_item = hass.states.get(entity_id)
+        if entity_item is None:
+            _LOGGER.warning(f"[AT3Climate.handle_zone_switch] Entity not found {entity_id}")
+            return
+
+        zone_id = entity_item.attributes.get('id')
+        if zone_id is None:
+            _LOGGER.warning(f"[AT3Climate.handle_zone_switch] Entity does not have id attribute {entity_item}")
+            return
+
+        await vzduch_api.zone_switch(zone_id, to_state)
+
     hass.services.async_register(AT3_DOMAIN, "set_zone_temperature", handle_set_zone_temperature)
+    hass.services.async_register(AT3_DOMAIN, "set_zone_damper", handle_set_zone_damper)
+    hass.services.async_register(AT3_DOMAIN, "zone_switch", handle_zone_switch)
 
 
 class AirTouch3Climate(ClimateEntity):

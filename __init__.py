@@ -1,6 +1,5 @@
 """Platform for Airtouch3."""
 import asyncio
-from datetime import timedelta
 import logging
 
 from async_timeout import timeout
@@ -11,12 +10,12 @@ from homeassistant.config_entries import SOURCE_IMPORT, ConfigEntry
 from homeassistant.const import CONF_HOST, CONF_PORT, CONF_TIMEOUT
 from .const import DOMAIN, TIMEOUT
 from homeassistant.exceptions import ConfigEntryNotReady
-import homeassistant.helpers.config_validation as cv
 from homeassistant.core import HomeAssistant
 from homeassistant.util import Throttle
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from . import config_flow  # noqa: F401
+from .smart_control import async_setup_services
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -53,6 +52,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
     hass.data.setdefault(DOMAIN, {}).update({entry.entry_id: vzduch_api})
 
     await hass.config_entries.async_forward_entry_setups(entry, COMPONENT_TYPES)
+
+    # Setup smart control services
+    await async_setup_services(hass)
 
     return True
 
