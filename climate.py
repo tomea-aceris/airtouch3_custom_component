@@ -330,15 +330,22 @@ class AirTouch3Climate(ClimateEntity):
 
     async def async_set_hvac_mode(self, hvac_mode):
         """Set HVAC mode."""
+        _LOGGER.debug(f"[AT3Climate] async_set_hvac_mode called with {hvac_mode}")
+
+        # If turning off, just use the power switch
         if hvac_mode == HVACMode.OFF:
-            _LOGGER.debug("[AT3Climate] async_set_hvac_mode Turning AC OFF")
+            _LOGGER.debug("[AT3Climate] Turning AC OFF via power_switch")
             await self._api.power_switch(AC_POWER_OFF)
-        else:
-            _LOGGER.debug(f"[AT3Climate] async_set_hvac_mode Setting hvac_mode mode to {hvac_mode}")
-            if self._api.power == AC_POWER_OFF:
-                await self._api.power_switch(AC_POWER_ON)
-            
-            await self._api.set_mode(HA_STATE_TO_AT3.get(hvac_mode)) #MBTODO
+            return
+
+        # If turning on, first turn on power if needed, then set the mode
+        if self._api.power == AC_POWER_OFF:
+            _LOGGER.debug(f"[AT3Climate] Turning AC ON via power_switch")
+            await self._api.power_switch(AC_POWER_ON)
+
+        # Set the mode (only for non-OFF modes)
+        _LOGGER.debug(f"[AT3Climate] Setting AC mode to {hvac_mode}")
+        await self._api.set_mode(HA_STATE_TO_AT3.get(hvac_mode))
 
     async def async_set_fan_mode(self, fan_mode):
         """Set fan mode."""
