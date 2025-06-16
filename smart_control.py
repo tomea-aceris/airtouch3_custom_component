@@ -1,6 +1,7 @@
 """Smart AC Control logic for AirTouch 3."""
 import logging
 import voluptuous as vol
+import time
 
 from homeassistant.core import HomeAssistant, ServiceCall
 from homeassistant.helpers import entity_registry as er
@@ -30,6 +31,7 @@ async def async_setup_services(hass: HomeAssistant):
 
     async def handle_smart_control(call: ServiceCall):
         """Handle the smart control service call."""
+        start_time = time.time()  # Track start time
         _LOGGER.debug(f"[AT3SmartControl] Running smart control logic with call data: {call.data}")
 
         # Get parameters from service call data with defaults
@@ -77,11 +79,13 @@ async def async_setup_services(hass: HomeAssistant):
             return
 
         # Force an update to get the latest data - check if method accepts no_throttle parameter
+        update_start = time.time()
         try:
             await vzduch_api.async_update(no_throttle=True)
         except TypeError:
             # If no_throttle is not accepted, call without it
             await vzduch_api.async_update()
+        _LOGGER.debug(f"[AT3SmartControl] API update took {time.time() - update_start:.2f} seconds")
 
         # Process each zone
         active_zones = 0
@@ -89,6 +93,7 @@ async def async_setup_services(hass: HomeAssistant):
         all_zones_at_temp = True
         any_zone_below_min = False
 
+        zone_start = time.time()
         for zone in vzduch_api.zones:
             # Skip inactive zones or zones without sensors
             if zone.status != 1 or not zone.sensors:
@@ -136,46 +141,56 @@ async def async_setup_services(hass: HomeAssistant):
             if zone_temp <= zone.desired_temperature - TEMP_THRESHOLD_LOW:
                 any_zone_below_min = True
 
+        _LOGGER.debug(f"[AT3SmartControl] Processing zones took {time.time() - zone_start:.2f} seconds")
+
         # Recalculate combined damper after adjustments
+        recalc_start = time.time()
         combined_damper = 0
         active_zones = 0
         for zone in vzduch_api.zones:
             if zone.status == 1:
                 active_zones += 1
                 combined_damper += zone.fan_value
+        _LOGGER.debug(f"[AT3SmartControl] Recalculating damper took {time.time() - recalc_start:.2f} seconds")
 
         # Check damper requirement (50% combined)
+        ac_control_start = time.time()
         damper_ratio = combined_damper / (active_zones * 100) if active_zones > 0 else 0
+
+        _LOGGER.debug(f"[AT3SmartControl] Current AC state: power={vzduch_api.power}, damper_ratio={damper_ratio:.2f}, active_zones={active_zones}, all_at_temp={all_zones_at_temp}, any_below_min={any_zone_below_min}")
+
         if damper_ratio < (MIN_DAMPER_PERCENTAGE / 100) and active_zones > 0:
             # Turn off AC if not enough combined damper opening
             _LOGGER.warning(f"[AT3SmartControl] Insufficient damper opening ({combined_damper}%), turning AC off")
-            await hass.services.async_call(
-                CLIMATE_DOMAIN,
-                SERVICE_TURN_OFF,
-                {"entity_id": climate_entity_id}
-            )
+            if vzduch_api.power == 1:  # Only turn off if currently on
+                await hass.services.async_call(
+                    CLIMATE_DOMAIN,
+                    SERVICE_TURN_OFF,
+                    {"entity_id": climate_entity_id}
+                )
 
-            # Notify user if notification service is available
-            if notify_service:
-                try:
-                    await hass.services.async_call(
-                        "notify",
-                        notify_service,
-                        {
-                            "title": "AC Turned Off",
-                            "message": f"AC turned off due to insufficient damper opening. Combined damper value: {combined_damper}%"
-                        }
-                    )
-                except Exception as e:
-                    _LOGGER.warning(f"[AT3SmartControl] Failed to send notification: {e}")
+                # Notify user if notification service is available
+                if notify_service:
+                    try:
+                        await hass.services.async_call(
+                            "notify",
+                            notify_service,
+                            {
+                                "title": "AC Turned Off",
+                                "message": f"AC turned off due to insufficient damper opening. Combined damper value: {combined_damper}%"
+                            }
+                        )
+                    except Exception as e:
+                        _LOGGER.warning(f"[AT3SmartControl] Failed to send notification: {e}")
         elif all_zones_at_temp and active_zones > 0:
             # Turn off AC if all zones at target temp
             _LOGGER.info(f"[AT3SmartControl] All {active_zones} zones at set temp, turning AC off")
-            await hass.services.async_call(
-                CLIMATE_DOMAIN,
-                SERVICE_TURN_OFF,
-                {"entity_id": climate_entity_id}
-            )
+            if vzduch_api.power == 1:  # Only turn off if currently on
+                await hass.services.async_call(
+                    CLIMATE_DOMAIN,
+                    SERVICE_TURN_OFF,
+                    {"entity_id": climate_entity_id}
+                )
         elif any_zone_below_min and vzduch_api.power == 0:  # Check if AC is off (0 = off, 1 = on)
             # Turn on AC if any zone is below min temp and AC is currently off
             _LOGGER.info(f"[AT3SmartControl] At least one zone below min temp, turning AC on")
@@ -184,6 +199,11 @@ async def async_setup_services(hass: HomeAssistant):
                 SERVICE_TURN_ON,
                 {"entity_id": climate_entity_id}
             )
+        _LOGGER.debug(f"[AT3SmartControl] AC control operations took {time.time() - ac_control_start:.2f} seconds")
+
+        # Log total execution time
+        execution_time = time.time() - start_time
+        _LOGGER.info(f"[AT3SmartControl] Total execution time: {execution_time:.2f} seconds")
 
     # Register the service with schema
     service_schema = vol.Schema(
