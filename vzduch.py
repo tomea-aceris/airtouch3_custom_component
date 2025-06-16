@@ -476,11 +476,13 @@ class VzduchSensor:
         # Initialize attributes that will be updated
         self._is_low_battery = sensor_data.get("isLowBattery", False)
         self._temperature = sensor_data.get("temperature", 0)
+        self._is_available = sensor_data.get("isAvailable", True)  # Default to True if not provided
 
     def update(self, sensor_data):
         """Update the sensor with new data."""
         self._is_low_battery = sensor_data.get("isLowBattery", False)
         self._temperature = sensor_data.get("temperature", 0)
+        self._is_available = sensor_data.get("isAvailable", True)  # Update availability
 
     @property
     def id(self):
@@ -501,3 +503,8 @@ class VzduchSensor:
     def temperature(self):
         """Return the sensor temperature."""
         return self._temperature
+
+    @property
+    def is_available(self):
+        """Return whether the sensor is available."""
+        return self._is_available
