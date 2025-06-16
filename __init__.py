@@ -2,17 +2,22 @@
 import asyncio
 import logging
 
-from custom_components.airtouch3.vzduch import Vzduch
-
+from aiohttp import ClientConnectionError
 from homeassistant.config_entries import SOURCE_IMPORT, ConfigEntry
 from homeassistant.const import CONF_HOST, CONF_PORT
-from .const import DOMAIN, TIMEOUT
-from homeassistant.exceptions import ConfigEntryNotReady
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import ConfigEntryNotReady
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from . import config_flow  # noqa: F401
+from .const import DOMAIN, TIMEOUT
 from .smart_control import async_setup_services
+
+try:
+    from custom_components.airtouch3.vzduch import Vzduch
+except ImportError:
+    # For local development
+    from .vzduch import Vzduch
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -82,8 +87,9 @@ async def api_init(hass, host, port, timeout = TIMEOUT):
     except ClientConnectionError:
         _LOGGER.debug("ClientConnectionError to %s", host)
         raise ConfigEntryNotReady
-    except Exception:  # pylint: disable=broad-except
-        _LOGGER.error("Unexpected error creating device %s", host)
+    except Exception as ex:  # pylint: disable=broad-except
+        # Make the exception more specific by logging the actual error
+        _LOGGER.error("Unexpected error creating device %s: %s", host, str(ex))
         return None
 
     return device
