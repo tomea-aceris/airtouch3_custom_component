@@ -1,9 +1,43 @@
 """Support for the Airthouch 3 Unit."""
 import logging
 
-import voluptuous as vol
+try:
+    from custom_components.airtouch3.vzduch import (
+        Vzduch,
+        AC_POWER_ON,
+        AC_POWER_OFF,
+        AC_FAN_MODE_QUIET,
+        AC_FAN_MODE_LOW,
+        AC_FAN_MODE_MEDIUM,
+        AC_FAN_MODE_HIGH,
+        AC_FAN_MODE_POWERFUL,
+        AC_FAN_MODE_AUTO,
+        AC_MODE_HEAT,
+        AC_MODE_COOL,
+        AC_MODE_FAN,
+        AC_MODE_DRY,
+        AC_MODE_AUTO
+    )
+except ImportError:
+    # For local development
+    from .vzduch import (
+        Vzduch,
+        AC_POWER_ON,
+        AC_POWER_OFF,
+        AC_FAN_MODE_QUIET,
+        AC_FAN_MODE_LOW,
+        AC_FAN_MODE_MEDIUM,
+        AC_FAN_MODE_HIGH,
+        AC_FAN_MODE_POWERFUL,
+        AC_FAN_MODE_AUTO,
+        AC_MODE_HEAT,
+        AC_MODE_COOL,
+        AC_MODE_FAN,
+        AC_MODE_DRY,
+        AC_MODE_AUTO
+    )
 
-from homeassistant.components.climate import PLATFORM_SCHEMA, ClimateEntity
+from homeassistant.components.climate import ClimateEntity
 from homeassistant.components.climate.const import (
     ATTR_FAN_MODE,
     ATTR_HVAC_MODE,
@@ -11,34 +45,16 @@ from homeassistant.components.climate.const import (
     HVACAction,
     ClimateEntityFeature,
 )
-from homeassistant.const import ATTR_TEMPERATURE, CONF_HOST, CONF_NAME, UnitOfTemperature
-import homeassistant.helpers.config_validation as cv
-
-from custom_components.airtouch3.vzduch import (
-    AC_POWER_ON,
-    AC_POWER_OFF,
-    AC_FAN_MODE_QUIET,
-    AC_FAN_MODE_LOW,
-    AC_FAN_MODE_MEDIUM,
-    AC_FAN_MODE_HIGH,
-    AC_FAN_MODE_POWERFUL,
-    AC_FAN_MODE_AUTO,
-    AC_MODE_HEAT,
-    AC_MODE_COOL,
-    AC_MODE_FAN,
-    AC_MODE_DRY,
-    AC_MODE_AUTO
-)
+from homeassistant.const import ATTR_TEMPERATURE, UnitOfTemperature
 
 from . import DOMAIN as AT3_DOMAIN
 from .const import (
-    ATTR_INSIDE_TEMPERATURE,
     FAN_QUIET,
     FAN_LOW,
     FAN_MEDIUM,
     FAN_HIGH,
     FAN_POWERFUL,
-    FAN_AUTO 
+    FAN_AUTO
 )
 
 _LOGGER = logging.getLogger(__name__)

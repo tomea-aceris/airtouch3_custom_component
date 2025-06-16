@@ -1,19 +1,22 @@
 import asyncio
 import logging
+
 import voluptuous as vol
-
+from aiohttp import ClientError, ClientResponseError
 from async_timeout import timeout
-from custom_components.airtouch3.vzduch import Vzduch
-
 from homeassistant import config_entries, core
 from homeassistant.const import CONF_HOST, CONF_PORT
-
-from . import config_flow
-from .const import DEFAULT_PORT, DOMAIN, TIMEOUT
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
-_LOGGER = logging.getLogger(__name__)
+from .const import DEFAULT_PORT, DOMAIN, TIMEOUT
 
+try:
+    from custom_components.airtouch3.vzduch import Vzduch
+except ImportError:
+    # For local development
+    from .vzduch import Vzduch
+
+_LOGGER = logging.getLogger(__name__)
 
 @config_entries.HANDLERS.register(DOMAIN)
 class AirTouch3ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
@@ -38,7 +41,6 @@ class AirTouch3ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         if user_input is None:
             return self.async_show_form(step_id="user", data_schema=self.schema)
 
-        errors = {}
         host = user_input[CONF_HOST]
         port = user_input[CONF_PORT]
 
@@ -55,17 +57,23 @@ class AirTouch3ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 data_schema=self.schema,
                 errors={"base": "device_timeout"},
             )
-        except web_exceptions.HTTPForbidden:
-            return self.async_show_form(
-                step_id="user", data_schema=self.schema, errors={"base": "forbidden"},
-            )
-        except ClientError:
-            _LOGGER.exception("ClientError")
+        except ClientResponseError as ex:
+            if ex.status == 403:  # Handle HTTPForbidden (403)
+                return self.async_show_form(
+                    step_id="user", data_schema=self.schema, errors={"base": "forbidden"},
+                )
+            else:
+                _LOGGER.exception("HTTP error: %s", str(ex))
+                return self.async_show_form(
+                    step_id="user", data_schema=self.schema, errors={"base": "device_fail"},
+                )
+        except ClientError as ex:
+            _LOGGER.exception(f"ClientError: {str(ex)}")
             return self.async_show_form(
                 step_id="user", data_schema=self.schema, errors={"base": "device_fail"},
             )
-        except Exception:  # pylint: disable=broad-except
-            _LOGGER.exception("Unexpected error creating device")
+        except (ValueError, TimeoutError) as ex:
+            _LOGGER.exception(f"Error creating device: {str(ex)}")
             return self.async_show_form(
                 step_id="user", data_schema=self.schema, errors={"base": "device_fail"},
             )
@@ -80,24 +88,32 @@ class AirTouch3ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             session = async_get_clientsession(self.hass)
             with timeout(TIMEOUT):
                 _LOGGER.debug("Call vzduch")
-                device = await Vzduch(session, host, port, timeout)
+                device = Vzduch(session, host, port, timeout)
+                await device.async_update()
+
         except asyncio.TimeoutError:
             return self.async_show_form(
                 step_id="user",
                 data_schema=self.schema,
                 errors={"base": "device_timeout"},
             )
-        except web_exceptions.HTTPForbidden:
-            return self.async_show_form(
-                step_id="user", data_schema=self.schema, errors={"base": "forbidden"},
-            )
-        except ClientError:
-            _LOGGER.exception("ClientError")
+        except ClientResponseError as ex:
+            if ex.status == 403:  # This is equivalent to HTTPForbidden
+                return self.async_show_form(
+                    step_id="user", data_schema=self.schema, errors={"base": "forbidden"},
+                )
+            else:
+                _LOGGER.exception("HTTP error: %s", str(ex))
+                return self.async_show_form(
+                    step_id="user", data_schema=self.schema, errors={"base": "device_fail"},
+                )
+        except ClientError as ex:
+            _LOGGER.exception(f"ClientError: {str(ex)}")
             return self.async_show_form(
                 step_id="user", data_schema=self.schema, errors={"base": "device_fail"},
             )
-        except Exception:  # pylint: disable=broad-except
-            _LOGGER.exception("Unexpected error creating device")
+        except (ValueError, TimeoutError) as ex:
+            _LOGGER.exception(f"Error creating device: {str(ex)}")
             return self.async_show_form(
                 step_id="user", data_schema=self.schema, errors={"base": "device_fail"},
             )

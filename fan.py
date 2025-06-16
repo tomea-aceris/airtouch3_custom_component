@@ -2,11 +2,6 @@
 import logging
 
 from homeassistant.components.fan import (FanEntity, FanEntityFeature)
- 
-
-from homeassistant.helpers.entity import ToggleEntity
-from homeassistant.util.percentage import int_states_in_range, ranged_value_to_percentage, percentage_to_ranged_value
-
 
 SPEED_RANGE = (1, 100)
 

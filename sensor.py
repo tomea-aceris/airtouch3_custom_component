@@ -3,21 +3,14 @@
 import logging
 
 from homeassistant.const import (
-    CONF_DEVICE_CLASS,
-    CONF_ICON,
-    CONF_NAME,
-    CONF_TYPE,
-    CONF_UNIT_OF_MEASUREMENT,
     UnitOfTemperature
 )
 from homeassistant.helpers.entity import Entity
 
+from . import DOMAIN as AT3_DOMAIN
 from .const import (
-    ATTR_INSIDE_TEMPERATURE,
     SENSOR_TYPE_TEMPERATURE,
 )
-
-from . import DOMAIN as AT3_DOMAIN
 
 SENSOR_ICON = "mdi:home-thermometer-outline"
 

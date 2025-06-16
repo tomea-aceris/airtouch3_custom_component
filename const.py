@@ -1,13 +1,4 @@
 """Constants for AirTouch 3."""
-from homeassistant.const import (
-    CONF_DEVICE_CLASS,
-    CONF_ICON,
-    CONF_NAME,
-    CONF_TYPE,
-    CONF_UNIT_OF_MEASUREMENT,
-    PERCENTAGE,
-    UnitOfTemperature
-)
 
 DEFAULT_PORT = 8899
 DOMAIN = "airtouch3"

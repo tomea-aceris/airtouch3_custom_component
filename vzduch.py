@@ -1,11 +1,9 @@
-import aiohttp
-import asyncio
-import logging
 import json.tool
-import time
-
+import logging
 from datetime import timedelta
-from aiohttp import ClientSession, ServerDisconnectedError
+
+import aiohttp
+from aiohttp import ServerDisconnectedError
 from homeassistant.util import Throttle
 
 from .const import (
@@ -70,7 +68,8 @@ class Vzduch:
         self._port = port
         self._timeout = timeout
         self._available = False
-        self._base_url = "http://{host}:{port}".format(host=self.host, port=self.port)
+        # noinspection HttpUrlsUsage
+        self._base_url = 'http://{host}:{port}'.format(host=self.host, port=self.port)
         _LOGGER.debug(f"[Vzduch] __init__  with [{self._base_url}]")
 
         self._selected_ac = 0 
@@ -93,7 +92,7 @@ class Vzduch:
         async with self._session.get("{base_url}{command}".format(
             base_url=self._base_url, command=command)) as resp_obj:
             response = await resp_obj.text()
-            if (resp_obj.status == 200 or resp_obj.status == 204):
+            if resp_obj.status == 200 or resp_obj.status == 204:
                 _LOGGER.debug("[Vzduch] Have a response")
                 _LOGGER.debug(f"Host [{self._host}] returned HTTP status code [{resp_obj.status}] for GET command [{command}]")
                 return response
@@ -107,7 +106,7 @@ class Vzduch:
         async with self._session.post("{base_url}{command}".format(
             base_url=self._base_url, command=command), data=data) as resp_obj:
             response = await resp_obj.text()
-            if (resp_obj.status == 200 or resp_obj.status == 204):
+            if resp_obj.status == 200 or resp_obj.status == 204:
                 _LOGGER.debug("[Vzduch] Have a response")
                 return response
             else:
@@ -129,7 +128,7 @@ class Vzduch:
                 else:
                     return await self.fetch_post(command, data)
         except ValueError:
-            pass
+            return None
         except ServerDisconnectedError as error:
             _LOGGER.debug(f"[Vzduch] Disconnected Error. Retry Count {retries}")
             if retries == 0:
@@ -137,7 +136,7 @@ class Vzduch:
             return await self.prep_fetch(command, data, retries=retries - 1)
 
     @Throttle(MIN_TIME_BETWEEN_UPDATES)
-    async def async_update(self, **kwargs):
+    async def async_update(self):
         """Get the latest status information from Vzduch.Dotek Net server"""
 
         _LOGGER.debug("[Vzduch] Doing async_update")
@@ -147,7 +146,7 @@ class Vzduch:
     def set_properties(self, response):
         _LOGGER.debug("[Vzduch] Set properties start")
 
-        if (response is not None):
+        if response is not None:
             self._available = True
         else:
             _LOGGER.warning("[Vzduch] Response is None")
@@ -171,20 +170,20 @@ class Vzduch:
             if existing_zone:
                 existing_zone[0].update(zone_data)
             else:
-                zone = Vzduch_Zone(zone_data)
+                zone = VzduchZone(zone_data)
                 self._zones.append(zone)
             for sensor_data in zone_data["sensors"]:
                 existing_sensor = list(filter(lambda x: x.id == sensor_data["id"], self._sensors))
                 if existing_sensor:
                     existing_sensor[0].update(sensor_data)
                 else:
-                    sensor = Vzduch_Sensor(sensor_data)
+                    sensor = VzduchSensor(sensor_data)
                     self._sensors.append(sensor)
         _LOGGER.debug(f"[Vzduch] Set properties done. Zone count {len(self._zones)}")
 
     @property
     def available(self) -> bool:
-        """Return True if entity is available."""
+        """Return True if the entity is available."""
         return self._available
 
     @property
@@ -229,7 +228,7 @@ class Vzduch:
 
     @property
     def mode(self):
-        """Return the current mode of the aircon unit (heat, cool etc)."""
+        """Return the current mode of the aircon unit (heat, cool, etc.)."""
         return self._mode
 
     @property
@@ -296,7 +295,7 @@ class Vzduch:
         self.set_properties(response)
 
     async def set_mode(self, to_mode):
-        """Set the AC Mode (Heat / Cool, etc)"""
+        """Set the AC Mode (Heat / Cool, etc.)"""
         _LOGGER.debug(f"[Vzduch] set_mode to_mode {to_mode}")
         command = POST_AC_MODE.format(self._selected_ac , to_mode)
         response = await self.prep_fetch(HTTP_POST, command)
@@ -346,118 +345,159 @@ class Vzduch:
     async def set_zone_temperature(self, zone_id, to_temperature):
         """Set the desired temperature for a given zone"""
         _LOGGER.debug(f"[Vzduch] set_zone_temperature to_temperature {to_temperature}")
-        selected_zone = self.zones[zone_id]
-        if selected_zone is None:
-            _LOGGER.warning(f"[Vzduch] Selected Zone with Id {zone_id} not found")
-            return
 
-        _LOGGER.debug(f"[Vzduch] Zone with Id {zone_id} current desired temperature {selected_zone.desired_temperature}")
-        inc_dec = (TEMPERATURE_INCREMENT if to_temperature >= selected_zone.desired_temperature else TEMPERATURE_DECREMENT)
-        command = POST_ZONE_TEMPERATURE.format(self._selected_ac, zone_id, inc_dec)
-        response = await self.prep_fetch(HTTP_POST, command)
-        self.set_properties(response)
-        return selected_zone.desired_temperature
+        try:
+            # Fast lookup using index if IDs match array positions
+            if 0 <= zone_id < len(self.zones) and self.zones[zone_id].id == zone_id:
+                selected_zone = self.zones[zone_id]
+            else:
+                # Fallback to search when IDs don't match positions
+                selected_zone = next(zone for zone in self.zones if zone.id == zone_id)
+
+            _LOGGER.debug(f"[Vzduch] Zone with Id {zone_id} current desired temperature {selected_zone.desired_temperature}")
+            inc_dec = (
+                TEMPERATURE_INCREMENT if to_temperature >= selected_zone.desired_temperature else TEMPERATURE_DECREMENT)
+            command = POST_ZONE_TEMPERATURE.format(self._selected_ac, zone_id, inc_dec)
+            response = await self.prep_fetch(HTTP_POST, command)
+            self.set_properties(response)
+
+            return selected_zone.desired_temperature
+        except (IndexError, StopIteration):
+            _LOGGER.warning(f"[Vzduch] Zone with Id {zone_id} not found")
+            return None  # Or handle the error as appropriate
 
     async def set_zone_damper(self, zone_id, percentage):
         """Set the desired damper percentage for a given zone"""
         _LOGGER.debug(f"[Vzduch] set_zone_damper percentage {percentage}")
-        selected_zone = self.zones[zone_id]
-        if selected_zone is None:
-            _LOGGER.warning(f"[Vzduch] Selected Zone with Id {zone_id} not found")
-            return
 
-        command = POST_ZONE_DAMPER.format(self._selected_ac, zone_id, percentage)
-        response = await self.prep_fetch(HTTP_POST, command)
-        self.set_properties(response)
-        return selected_zone.fan_value
+        try:
+            # Fast lookup using index if IDs match array positions
+            if 0 <= zone_id < len(self.zones) and self.zones[zone_id].id == zone_id:
+                selected_zone = self.zones[zone_id]
+            else:
+                # Fallback to search when IDs don't match positions
+                selected_zone = next(zone for zone in self.zones if zone.id == zone_id)
 
-class Vzduch_Zone:
-    """ A Zone """
+            _LOGGER.debug(f"[Vzduch] Zone with Id {zone_id} current fan value {selected_zone.fan_value}")
+            command = POST_ZONE_DAMPER.format(self._selected_ac, zone_id, percentage)
+            response = await self.prep_fetch(HTTP_POST, command)
+            self.set_properties(response)
+
+            return selected_zone.fan_value
+        except (IndexError, StopIteration):
+            _LOGGER.warning(f"[Vzduch] Zone with Id {zone_id} not found")
+            return None  # Or handle the error as appropriate
+
+class VzduchZone:
+    """Representation of an AirTouch3 Zone."""
+
     def __init__(self, zone_data):
-        self._id = zone_data["id"]
-        self._name = zone_data["name"]
-        self.update(zone_data)
+        """Initialize the zone with data."""
+        self._id = zone_data.get("id")
+        self._name = zone_data.get("name")
+
+        # Initialize attributes that will be updated later
+        self._status = zone_data.get("status")
+        self._fan_value = zone_data.get("fanValue")
+        self._is_spill = zone_data.get("isSpill")
+        self._desired_temperature = zone_data.get("desiredTemperature")
+        self._zone_temperature_type = zone_data.get("zoneTemperatureType")
+
+        # Initialize sensors list
+        self._sensors = []
+        if "sensors" in zone_data:
+            for sensor_data in zone_data["sensors"]:
+                sensor = VzduchSensor(sensor_data)
+                self._sensors.append(sensor)
 
     def update(self, zone_data):
-        """Once a zone is created a subset of its properties are kept up to date"""
-        self._status = zone_data["status"]
-        self._fan_value = zone_data["fanValue"]
-        self._is_spill = zone_data["isSpill"]
-        self._desired_temperature = zone_data["desiredTemperature"]
-        self._zone_temperature_type = zone_data["zoneTemperatureType"]
+        """Update the zone with new data."""
+        self._status = zone_data.get("status")
+        self._fan_value = zone_data.get("fanValue")
+        self._is_spill = zone_data.get("isSpill")
+        self._desired_temperature = zone_data.get("desiredTemperature")
+        self._zone_temperature_type = zone_data.get("zoneTemperatureType")
+
+        # Clear and update sensors
         self._sensors = []
-        for sensor_data in zone_data["sensors"]:
-            sensor = Vzduch_Sensor(sensor_data)
-            self._sensors.append(sensor)
+        if "sensors" in zone_data:
+            for sensor_data in zone_data["sensors"]:
+                sensor = VzduchSensor(sensor_data)
+                self._sensors.append(sensor)
 
     @property
     def id(self):
-        """Returns the id for the zone"""
+        """Return the zone ID."""
         return self._id
 
     @property
     def name(self):
-        """Returns the name for the zone"""
+        """Return the zone name."""
         return self._name
 
     @property
     def status(self):
-        """Returns the zone status (on / off)"""
+        """Return the zone status."""
         return self._status
 
     @property
     def fan_value(self):
-        """Returns the zone fan value"""
+        """Return the zone fan value."""
         return self._fan_value
 
     @property
     def is_spill(self):
-        """Returns whether the zone is used as spill"""
+        """Return whether the zone is a spill zone."""
         return self._is_spill
 
     @property
     def desired_temperature(self):
-        """Returns the zone desired temperature"""
+        """Return the zone's desired temperature."""
         return self._desired_temperature
 
     @property
     def zone_temperature_type(self):
-        """Returns how the temperature is calculated or used within the zone"""
+        """Return the zone's temperature type."""
         return self._zone_temperature_type
 
     @property
     def sensors(self):
-        """Returns all sensors registered in the zone"""
+        """Return the zone's sensors."""
         return self._sensors
 
-class Vzduch_Sensor:
-    """ A Sensor in a Zone """
+class VzduchSensor:
+    """Representation of an AirTouch3 Temperature Sensor."""
+
     def __init__(self, sensor_data):
-        self._id = sensor_data["id"]
-        self._is_available = sensor_data["isAvailable"]
-        self.update(sensor_data)
+        """Initialize the sensor with data."""
+        self._id = sensor_data.get("id", 0)
+        self._name = sensor_data.get("name", "")
+
+        # Initialize attributes that will be updated
+        self._is_low_battery = sensor_data.get("isLowBattery", False)
+        self._temperature = sensor_data.get("temperature", 0)
 
     def update(self, sensor_data):
-        """Once a sensor is created a subset of its properties are kept up to date"""
-        self._is_low_battery = sensor_data["isLowBattery"]
-        self._temperature = sensor_data["temperature"]
+        """Update the sensor with new data."""
+        self._is_low_battery = sensor_data.get("isLowBattery", False)
+        self._temperature = sensor_data.get("temperature", 0)
 
     @property
     def id(self):
-        """Returns the id for the sensor"""
+        """Return the sensor ID."""
         return self._id
 
     @property
-    def is_available(self):
-        """Return whether the sensor is available or not"""
-        return self._is_available
+    def name(self):
+        """Return the sensor name."""
+        return self._name
 
     @property
     def is_low_battery(self):
-        """Return the battery status for the sensor"""
+        """Return whether the sensor has a low battery."""
         return self._is_low_battery
 
     @property
     def temperature(self):
-        """Return the temperature for the sensor"""
+        """Return the sensor temperature."""
         return self._temperature
