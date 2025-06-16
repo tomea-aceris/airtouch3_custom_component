@@ -338,7 +338,7 @@ class AirTouch3Climate(ClimateEntity):
             if self._api.power == AC_POWER_OFF:
                 await self._api.power_switch(AC_POWER_ON)
             
-        await self._api.set_mode(HA_STATE_TO_AT3.get(hvac_mode)) #MBTODO
+            await self._api.set_mode(HA_STATE_TO_AT3.get(hvac_mode)) #MBTODO
 
     async def async_set_fan_mode(self, fan_mode):
         """Set fan mode."""
