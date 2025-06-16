@@ -2,16 +2,13 @@
 import asyncio
 import logging
 
-from async_timeout import timeout
 from custom_components.airtouch3.vzduch import Vzduch
-import voluptuous as vol
 
 from homeassistant.config_entries import SOURCE_IMPORT, ConfigEntry
-from homeassistant.const import CONF_HOST, CONF_PORT, CONF_TIMEOUT
+from homeassistant.const import CONF_HOST, CONF_PORT
 from .const import DOMAIN, TIMEOUT
 from homeassistant.exceptions import ConfigEntryNotReady
 from homeassistant.core import HomeAssistant
-from homeassistant.util import Throttle
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from . import config_flow  # noqa: F401

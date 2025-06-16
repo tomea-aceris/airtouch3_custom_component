@@ -2,13 +2,7 @@
 import logging
 import voluptuous as vol
 
-from homeassistant.components.climate.const import (
-    DOMAIN as CLIMATE_DOMAIN,
-    SERVICE_TURN_OFF,
-    SERVICE_TURN_ON,
-)
-from homeassistant.core import HomeAssistant, ServiceCall, callback
-from homeassistant.helpers.typing import ConfigType
+from homeassistant.core import HomeAssistant, ServiceCall
 from homeassistant.helpers import entity_registry as er
 
 from .const import DOMAIN as AT3_DOMAIN
@@ -22,15 +16,21 @@ TEMP_THRESHOLD_HIGH = 2  # Degrees above set temp to turn off zone
 TEMP_THRESHOLD_LOW = 2   # Degrees below set temp to turn on AC
 MIN_DAMPER_PERCENTAGE = 50  # Minimum required combined damper opening percentage
 
+# Climate domain and services
+CLIMATE_DOMAIN = "climate"
+SERVICE_TURN_ON = "turn_on"
+SERVICE_TURN_OFF = "turn_off"
+
 # Default notification service - can be overridden in service call
 DEFAULT_NOTIFY_SERVICE = "mobile_app_toms_phone"
 
 async def async_setup_services(hass: HomeAssistant):
     """Set up services for AirTouch3 smart control."""
+    _LOGGER.debug(f"[AT3SmartControl] Setting up services for {AT3_DOMAIN}")
 
     async def handle_smart_control(call: ServiceCall):
         """Handle the smart control service call."""
-        _LOGGER.debug(f"[AT3SmartControl] Running smart control logic")
+        _LOGGER.debug(f"[AT3SmartControl] Running smart control logic with call data: {call.data}")
 
         # Get parameters from service call data with defaults
         climate_entity_id = call.data.get("climate_entity_id", None)
@@ -59,21 +59,29 @@ async def async_setup_services(hass: HomeAssistant):
 
         # Get AC API (vzduch_api) from the hass data
         entry_id = None
+        vzduch_api = None
+
+        # First, check if DOMAIN exists in hass.data
+        if AT3_DOMAIN not in hass.data:
+            _LOGGER.error(f"[AT3SmartControl] {AT3_DOMAIN} not found in hass.data")
+            return
+
+        # Find the first entry_id in the domain data
         for e_id, data in hass.data[AT3_DOMAIN].items():
             entry_id = e_id
+            vzduch_api = data
             break
 
-        if not entry_id:
-            _LOGGER.error(f"[AT3SmartControl] No AirTouch3 integration found")
+        if not entry_id or not vzduch_api:
+            _LOGGER.error(f"[AT3SmartControl] No AirTouch3 integration or API found")
             return
 
-        vzduch_api = hass.data[AT3_DOMAIN].get(entry_id)
-        if not vzduch_api:
-            _LOGGER.error(f"[AT3SmartControl] API not found")
-            return
-
-        # Force an update to get the latest data
-        await vzduch_api.async_update(no_throttle=True)
+        # Force an update to get the latest data - check if method accepts no_throttle parameter
+        try:
+            await vzduch_api.async_update(no_throttle=True)
+        except TypeError:
+            # If no_throttle is not accepted, call without it
+            await vzduch_api.async_update()
 
         # Process each zone
         active_zones = 0
@@ -185,11 +193,16 @@ async def async_setup_services(hass: HomeAssistant):
         }
     )
 
+    # Log before registering service
+    _LOGGER.debug(f"[AT3SmartControl] Registering service: {AT3_DOMAIN}.run_smart_control")
+
     hass.services.async_register(
         AT3_DOMAIN,
         "run_smart_control",
         handle_smart_control,
         schema=service_schema
     )
+
+    _LOGGER.debug(f"[AT3SmartControl] Successfully registered service: {AT3_DOMAIN}.run_smart_control")
 
     return True
