@@ -347,6 +347,18 @@ class AirTouch3Climate(ClimateEntity):
         _LOGGER.debug(f"[AT3Climate] Setting AC mode to {hvac_mode}")
         await self._api.set_mode(HA_STATE_TO_AT3.get(hvac_mode))
 
+    async def async_turn_on(self, **kwargs):
+        """Turn the entity on."""
+        _LOGGER.debug("[AT3Climate] async_turn_on called")
+        if self._api.power == AC_POWER_OFF:
+            await self._api.power_switch(AC_POWER_ON)
+
+    async def async_turn_off(self, **kwargs):
+        """Turn the entity off."""
+        _LOGGER.debug("[AT3Climate] async_turn_off called")
+        if self._api.power == AC_POWER_ON:
+            await self._api.power_switch(AC_POWER_OFF)
+
     async def async_set_fan_mode(self, fan_mode):
         """Set fan mode."""
         await self._api.set_fan_mode(HA_FAN_MODE_TO_AT3.get(fan_mode)) 
