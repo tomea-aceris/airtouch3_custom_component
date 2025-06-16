@@ -299,7 +299,7 @@ class Vzduch:
         _LOGGER.debug(f"[Vzduch] set_mode to_mode {to_mode}")
 
         if to_mode == -1:
-            # Instead of setting mode to -1, turn off the power
+            # Turn off the power
             await self.power_switch(AC_POWER_OFF)
             return
 
