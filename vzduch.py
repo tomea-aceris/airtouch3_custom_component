@@ -69,7 +69,7 @@ class Vzduch:
         self._timeout = timeout
         self._available = False
         # noinspection HttpUrlsUsage
-        self._base_url = 'http://{host}:{port}'.format(host=self.host, port=self.port)
+        self._base_url = 'https://{host}:{port}'.format(host=self.host, port=self.port)
         _LOGGER.debug(f"[Vzduch] __init__  with [{self._base_url}]")
 
         self._selected_ac = 0 
