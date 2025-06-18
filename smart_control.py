@@ -1,4 +1,4 @@
-"""Smart AC Control logic for AirTouch 3."""
+"""Smart AC Control logic for AirTouch 3 with simplified zone-based temperature control."""
 import logging
 import voluptuous as vol
 import time
@@ -11,11 +11,8 @@ from .const import DOMAIN as AT3_DOMAIN
 _LOGGER = logging.getLogger(__name__)
 
 # Constants for the control logic
-HIGH_FAN_PERCENTAGE = 100
-LOW_FAN_PERCENTAGE = 5
-TEMP_THRESHOLD_HIGH = 2  # Degrees above set temp to turn off zone
-TEMP_THRESHOLD_LOW = 2   # Degrees below set temp to turn on AC
-MIN_DAMPER_PERCENTAGE = 50  # Minimum required combined damper opening percentage
+TEMP_ABOVE_THRESHOLD = 1  # Degrees above set temp to turn off zone
+TEMP_BELOW_THRESHOLD = 2  # Degrees below set temp to turn on zone
 
 # Climate domain and services
 CLIMATE_DOMAIN = "climate"
@@ -37,6 +34,15 @@ async def async_setup_services(hass: HomeAssistant):
         # Get parameters from service call data with defaults
         climate_entity_id = call.data.get("climate_entity_id", None)
         notify_service = call.data.get("notify_service", DEFAULT_NOTIFY_SERVICE)
+
+        # Store active zones when smart control is first activated
+        # Use the hass.data dictionary to store active zones
+        if f"{AT3_DOMAIN}_active_zones" not in hass.data:
+            # First run - need to identify active zones
+            _LOGGER.debug(f"[AT3SmartControl] First run detected - will record active zones")
+            is_first_run = True
+        else:
+            is_first_run = False
 
         # If no climate entity ID was provided, try to find the AirTouch climate entity
         if not climate_entity_id:
@@ -78,90 +84,111 @@ async def async_setup_services(hass: HomeAssistant):
             _LOGGER.error(f"[AT3SmartControl] No AirTouch3 integration or API found")
             return
 
-        # Force an update to get the latest data - check if method accepts no_throttle parameter
-        update_start = time.time()
+        # Force an update to get the latest data
         try:
             await vzduch_api.async_update(no_throttle=True)
         except TypeError:
             # If no_throttle is not accepted, call without it
             await vzduch_api.async_update()
-        _LOGGER.debug(f"[AT3SmartControl] API update took {time.time() - update_start:.2f} seconds")
 
-        # Process each zone
-        active_zones = 0
-        combined_damper = 0
-        all_zones_at_temp = True
-        any_zone_below_min = False
+        # On first run, record active zones
+        if is_first_run:
+            active_zone_ids = [zone.id for zone in vzduch_api.zones if zone.status == 1]
+            hass.data[f"{AT3_DOMAIN}_active_zones"] = active_zone_ids
+            _LOGGER.info(f"[AT3SmartControl] Recorded active zones: {active_zone_ids}")
 
-        zone_start = time.time()
+        # Get the list of zones that were active when smart control was activated
+        monitored_zone_ids = hass.data.get(f"{AT3_DOMAIN}_active_zones", [])
+
+        # Track states for control logic
+        all_active_zones_at_temp = True  # All zones at or above desired temp
+        any_active_zone_below_threshold = False  # Any zone 2+ degrees below desired temp
+
+        # Process each zone that was initially active
         for zone in vzduch_api.zones:
-            # Skip inactive zones or zones without sensors
-            if zone.status != 1 or not zone.sensors:
+            # Only process zones that were active when smart control was activated
+            if zone.id not in monitored_zone_ids:
+                _LOGGER.debug(f"[AT3SmartControl] Ignoring zone {zone.name} as it wasn't active at smart control activation")
                 continue
 
-            active_zones += 1
-            combined_damper += zone.fan_value
+            # Skip zones without sensors
+            if not zone.sensors:
+                _LOGGER.debug(f"[AT3SmartControl] Zone {zone.name} has no sensors, skipping")
+                continue
 
             # Get temperature from the first sensor in the zone
-            zone_temp = zone.sensors[0].temperature if zone.sensors else None
+            zone_temp = zone.sensors[0].temperature
             if zone_temp is None:
                 _LOGGER.debug(f"[AT3SmartControl] Zone {zone.name} has no temperature reading")
                 continue
 
-            # Logic for fan control based on temperature
-            if zone_temp >= zone.desired_temperature + TEMP_THRESHOLD_HIGH:
-                # Close damper completely if 2+ degrees above target (instead of turning off)
-                _LOGGER.info(f"[AT3SmartControl] Zone {zone.name} temp ({zone_temp}°C) is above threshold, closing damper")
-                await vzduch_api.set_zone_damper(zone.id, 0)
+            # Check if zone is too warm (1+ degree above desired)
+            if zone_temp >= zone.desired_temperature + TEMP_ABOVE_THRESHOLD:
+                if zone.status == 1:  # Only switch off if currently on
+                    _LOGGER.info(f"[AT3SmartControl] Zone {zone.name} temp ({zone_temp}°C) is {TEMP_ABOVE_THRESHOLD}° above desired, turning off")
+                    await vzduch_api.zone_switch(zone.id, 0)  # Switch zone off
 
-                # Notify user if notification service is available
-                if notify_service:
-                    try:
-                        await hass.services.async_call(
-                            "notify",
-                            notify_service,
-                            {
-                                "title": "Zone Damper Closed",
-                                "message": f"Zone {zone.name} damper closed because temperature ({zone_temp}°C) is {TEMP_THRESHOLD_HIGH}+ degrees above desired ({zone.desired_temperature}°C)."
-                            }
-                        )
-                    except Exception as e:
-                        _LOGGER.warning(f"[AT3SmartControl] Failed to send notification: {e}")
-            elif zone_temp >= zone.desired_temperature:
-                # Set fan to LOW_FAN_PERCENTAGE if at/above target temp
-                _LOGGER.info(f"[AT3SmartControl] Zone {zone.name} temp ({zone_temp}°C) is at/above set point, setting fan to {LOW_FAN_PERCENTAGE}%")
-                await vzduch_api.set_zone_damper(zone.id, LOW_FAN_PERCENTAGE)
-            else:
-                # Set fan to HIGH_FAN_PERCENTAGE if below target temp
-                _LOGGER.info(f"[AT3SmartControl] Zone {zone.name} temp ({zone_temp}°C) is below set point, setting fan to {HIGH_FAN_PERCENTAGE}%")
-                await vzduch_api.set_zone_damper(zone.id, HIGH_FAN_PERCENTAGE)
-                all_zones_at_temp = False
+                    # Notify user
+                    if notify_service:
+                        try:
+                            await hass.services.async_call(
+                                "notify",
+                                notify_service,
+                                {
+                                    "title": "Zone Turned Off",
+                                    "message": f"Zone {zone.name} turned off because temperature ({zone_temp}°C) is {TEMP_ABOVE_THRESHOLD}° above desired ({zone.desired_temperature}°C)."
+                                }
+                            )
+                        except Exception as e:
+                            _LOGGER.warning(f"[AT3SmartControl] Failed to send notification: {e}")
 
-            # Check if any zone is below min temperature threshold
-            if zone_temp <= zone.desired_temperature - TEMP_THRESHOLD_LOW:
-                any_zone_below_min = True
+            # Check if zone is too cold (2+ degrees below desired)
+            elif zone_temp <= zone.desired_temperature - TEMP_BELOW_THRESHOLD:
+                if zone.status == 0:  # Only switch on if currently off
+                    _LOGGER.info(f"[AT3SmartControl] Zone {zone.name} temp ({zone_temp}°C) is {TEMP_BELOW_THRESHOLD}° below desired, turning on")
+                    await vzduch_api.zone_switch(zone.id, 1)  # Switch zone on
 
-        _LOGGER.debug(f"[AT3SmartControl] Processing zones took {time.time() - zone_start:.2f} seconds")
+                    # Notify user
+                    if notify_service:
+                        try:
+                            await hass.services.async_call(
+                                "notify",
+                                notify_service,
+                                {
+                                    "title": "Zone Turned On",
+                                    "message": f"Zone {zone.name} turned on because temperature ({zone_temp}°C) is {TEMP_BELOW_THRESHOLD}° below desired ({zone.desired_temperature}°C)."
+                                }
+                            )
+                        except Exception as e:
+                            _LOGGER.warning(f"[AT3SmartControl] Failed to send notification: {e}")
 
-        # Recalculate combined damper after adjustments
-        recalc_start = time.time()
-        combined_damper = 0
-        active_zones = 0
-        for zone in vzduch_api.zones:
-            if zone.status == 1:
-                active_zones += 1
-                combined_damper += zone.fan_value
-        _LOGGER.debug(f"[AT3SmartControl] Recalculating damper took {time.time() - recalc_start:.2f} seconds")
+                # Mark that we have an active zone below threshold
+                any_active_zone_below_threshold = True
+                all_active_zones_at_temp = False
 
-        # Check damper requirement (50% combined)
-        ac_control_start = time.time()
-        damper_ratio = combined_damper / (active_zones * 100) if active_zones > 0 else 0
+            # For zones with temps between thresholds, just check if they're below desired
+            elif zone_temp < zone.desired_temperature:
+                # The zone is below desired but not below threshold
+                all_active_zones_at_temp = False
 
-        _LOGGER.debug(f"[AT3SmartControl] Current AC state: power={vzduch_api.power}, damper_ratio={damper_ratio:.2f}, active_zones={active_zones}, all_at_temp={all_zones_at_temp}, any_below_min={any_zone_below_min}")
+        # Force another update to get the latest zone status after our changes
+        try:
+            await vzduch_api.async_update(no_throttle=True)
+        except TypeError:
+            await vzduch_api.async_update()
 
-        if damper_ratio < (MIN_DAMPER_PERCENTAGE / 100) and active_zones > 0:
-            # Turn off AC if not enough combined damper opening
-            _LOGGER.warning(f"[AT3SmartControl] Insufficient damper opening ({combined_damper}%), turning AC off")
+        # Check if there are any active zones from our monitored list
+        active_monitored_zones = [zone for zone in vzduch_api.zones
+                                  if zone.id in monitored_zone_ids and zone.status == 1]
+
+        if not active_monitored_zones:
+            _LOGGER.info(f"[AT3SmartControl] No active monitored zones, no AC control needed")
+            return
+
+        # AC Control Logic
+        if all_active_zones_at_temp and active_monitored_zones:
+            # All active zones are at or above desired temp - turn off AC
+            _LOGGER.info(f"[AT3SmartControl] All active zones at or above desired temperature, turning AC off")
             if vzduch_api.power == 1:  # Only turn off if currently on
                 await hass.services.async_call(
                     CLIMATE_DOMAIN,
@@ -169,7 +196,7 @@ async def async_setup_services(hass: HomeAssistant):
                     {"entity_id": climate_entity_id}
                 )
 
-                # Notify user if notification service is available
+                # Notify user
                 if notify_service:
                     try:
                         await hass.services.async_call(
@@ -177,29 +204,34 @@ async def async_setup_services(hass: HomeAssistant):
                             notify_service,
                             {
                                 "title": "AC Turned Off",
-                                "message": f"AC turned off due to insufficient damper opening. Combined damper value: {combined_damper}%"
+                                "message": "AC turned off because all active zones have reached their desired temperature."
                             }
                         )
                     except Exception as e:
                         _LOGGER.warning(f"[AT3SmartControl] Failed to send notification: {e}")
-        elif all_zones_at_temp and active_zones > 0:
-            # Turn off AC if all zones at target temp
-            _LOGGER.info(f"[AT3SmartControl] All {active_zones} zones at set temp, turning AC off")
-            if vzduch_api.power == 1:  # Only turn off if currently on
-                await hass.services.async_call(
-                    CLIMATE_DOMAIN,
-                    SERVICE_TURN_OFF,
-                    {"entity_id": climate_entity_id}
-                )
-        elif any_zone_below_min and vzduch_api.power == 0:  # Check if AC is off (0 = off, 1 = on)
-            # Turn on AC if any zone is below min temp and AC is currently off
-            _LOGGER.info(f"[AT3SmartControl] At least one zone below min temp, turning AC on")
+
+        elif any_active_zone_below_threshold and vzduch_api.power == 0:
+            # At least one active zone is below threshold and AC is off - turn on AC
+            _LOGGER.info(f"[AT3SmartControl] At least one active zone below threshold, turning AC on")
             await hass.services.async_call(
                 CLIMATE_DOMAIN,
                 SERVICE_TURN_ON,
                 {"entity_id": climate_entity_id}
             )
-        _LOGGER.debug(f"[AT3SmartControl] AC control operations took {time.time() - ac_control_start:.2f} seconds")
+
+            # Notify user
+            if notify_service:
+                try:
+                    await hass.services.async_call(
+                        "notify",
+                        notify_service,
+                        {
+                            "title": "AC Turned On",
+                            "message": "AC turned on because at least one active zone is below temperature threshold."
+                        }
+                    )
+                except Exception as e:
+                    _LOGGER.warning(f"[AT3SmartControl] Failed to send notification: {e}")
 
         # Log total execution time
         execution_time = time.time() - start_time
@@ -213,16 +245,11 @@ async def async_setup_services(hass: HomeAssistant):
         }
     )
 
-    # Log before registering service
-    _LOGGER.debug(f"[AT3SmartControl] Registering service: {AT3_DOMAIN}.run_smart_control")
-
     hass.services.async_register(
         AT3_DOMAIN,
         "run_smart_control",
         handle_smart_control,
         schema=service_schema
     )
-
-    _LOGGER.debug(f"[AT3SmartControl] Successfully registered service: {AT3_DOMAIN}.run_smart_control")
 
     return True
