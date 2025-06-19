@@ -22,6 +22,9 @@ SERVICE_TURN_OFF = "turn_off"
 # Default notification service - can be overridden in service call
 DEFAULT_NOTIFY_SERVICE = "mobile_app_tom_s_phone"
 
+# Auto switch identifier suffix in entity IDs
+AUTO_SWITCH_SUFFIX = "_auto"
+
 async def async_setup_services(hass: HomeAssistant):
     """Set up services for AirTouch3 smart control."""
     _LOGGER.debug(f"[AT3SmartControl] Setting up services for {AT3_DOMAIN}")
@@ -34,15 +37,6 @@ async def async_setup_services(hass: HomeAssistant):
         # Get parameters from service call data with defaults
         climate_entity_id = call.data.get("climate_entity_id", None)
         notify_service = call.data.get("notify_service", DEFAULT_NOTIFY_SERVICE)
-
-        # Store active zones when smart control is first activated
-        # Use the hass.data dictionary to store active zones
-        if f"{AT3_DOMAIN}_active_zones" not in hass.data:
-            # First run - need to identify active zones
-            _LOGGER.debug(f"[AT3SmartControl] First run detected - will record active zones")
-            is_first_run = True
-        else:
-            is_first_run = False
 
         # If no climate entity ID was provided, try to find the AirTouch climate entity
         if not climate_entity_id:
@@ -91,34 +85,52 @@ async def async_setup_services(hass: HomeAssistant):
             # If no_throttle is not accepted, call without it
             await vzduch_api.async_update()
 
-        # On first run, record active zones
-        if is_first_run:
-            active_zone_ids = [zone.id for zone in vzduch_api.zones if zone.status == 1]
-            hass.data[f"{AT3_DOMAIN}_active_zones"] = active_zone_ids
-            _LOGGER.info(f"[AT3SmartControl] Recorded active zones: {active_zone_ids}")
+        # Find all enabled auto switch entities
+        registry = er.async_get(hass)
+        auto_switch_entities = []
 
-        # Get the list of zones that were active when smart control was activated
-        monitored_zone_ids = hass.data.get(f"{AT3_DOMAIN}_active_zones", [])
+        for entity_id, entry in registry.entities.items():
+            if (entry.platform == AT3_DOMAIN and
+                    entry.domain == "switch" and
+                    entity_id.endswith(AUTO_SWITCH_SUFFIX)):
+                entity_state = hass.states.get(entity_id)
+                if entity_state and entity_state.state == "on":
+                    auto_switch_entities.append(entity_id)
+                    _LOGGER.debug(f"[AT3SmartControl] Found enabled auto switch: {entity_id}")
 
-        # Safety check - if no monitored zones, exit
-        if not monitored_zone_ids:
-            _LOGGER.error(f"[AT3SmartControl] No active zones were recorded during first run. Cannot continue.")
+        if not auto_switch_entities:
+            _LOGGER.warning(f"[AT3SmartControl] No enabled auto switches found. Smart control will not manage any zones.")
+            return
+
+        # Extract zone IDs from the auto switch entity IDs
+        controlled_zone_ids = []
+        for entity_id in auto_switch_entities:
+            # Parse the zone ID from attributes
+            entity_state = hass.states.get(entity_id)
+            if entity_state and "id" in entity_state.attributes:
+                zone_id = entity_state.attributes["id"]
+                controlled_zone_ids.append(zone_id)
+                _LOGGER.debug(f"[AT3SmartControl] Zone ID {zone_id} will be controlled")
+
+        # Safety check - if no controlled zones, exit
+        if not controlled_zone_ids:
+            _LOGGER.error(f"[AT3SmartControl] Could not determine zone IDs from auto switches. Cannot continue.")
             return
 
         # Track states for control logic
-        any_active_zone_below_threshold = False  # Any zone 2+ degrees below desired temp
+        any_controlled_zone_below_threshold = False  # Any zone 2+ degrees below desired temp
 
-        # First count all active monitored zones to determine if any zone is the last active one
-        active_monitored_zones_count = 0
+        # First count all active controlled zones
+        active_controlled_zones_count = 0
         for zone in vzduch_api.zones:
-            if zone.id in monitored_zone_ids and zone.status == 1:
-                active_monitored_zones_count += 1
+            if zone.id in controlled_zone_ids and zone.status == 1:
+                active_controlled_zones_count += 1
 
-        # Now process each zone that was initially active
+        # Now process each controlled zone
         for zone in vzduch_api.zones:
-            # Only process zones that were active when smart control was activated
-            if zone.id not in monitored_zone_ids:
-                _LOGGER.debug(f"[AT3SmartControl] Ignoring zone {zone.name} as it wasn't active at smart control activation")
+            # Only process zones that are controlled by auto switches
+            if zone.id not in controlled_zone_ids:
+                _LOGGER.debug(f"[AT3SmartControl] Ignoring zone {zone.name} as it's not controlled by an auto switch")
                 continue
 
             # Skip zones without sensors
@@ -137,7 +149,7 @@ async def async_setup_services(hass: HomeAssistant):
             if zone_temp >= zone.desired_temperature + TEMP_ABOVE_THRESHOLD:
                 if zone.status == 1:  # Only switch off if currently on
                     # Check if this is the last active zone
-                    if active_monitored_zones_count == 1:
+                    if active_controlled_zones_count == 1:
                         _LOGGER.info(f"[AT3SmartControl] Last active zone {zone.name} reached max temp, will turn off AC instead of zone")
                         # This zone will remain on, but we'll turn off the AC in the AC control logic section
                     else:
@@ -178,8 +190,8 @@ async def async_setup_services(hass: HomeAssistant):
                         except Exception as e:
                             _LOGGER.warning(f"[AT3SmartControl] Failed to send notification: {e}")
 
-                # Mark that we have an active zone below threshold
-                any_active_zone_below_threshold = True
+                # Mark that we have a controlled zone below threshold
+                any_controlled_zone_below_threshold = True
 
         # Force another update to get the latest zone status after our changes
         try:
@@ -188,11 +200,11 @@ async def async_setup_services(hass: HomeAssistant):
             await vzduch_api.async_update()
 
         # Re-check if we have any active zones after the updates
-        active_monitored_zones_count = 0
+        active_controlled_zones_count = 0
         all_active_zones_above_threshold = True
         for zone in vzduch_api.zones:
-            if zone.id in monitored_zone_ids and zone.status == 1:
-                active_monitored_zones_count += 1
+            if zone.id in controlled_zone_ids and zone.status == 1:
+                active_controlled_zones_count += 1
 
                 # Skip zones without sensors
                 if not zone.sensors:
@@ -207,44 +219,40 @@ async def async_setup_services(hass: HomeAssistant):
                 if zone_temp < zone.desired_temperature + TEMP_ABOVE_THRESHOLD:
                     all_active_zones_above_threshold = False
 
-        _LOGGER.debug(f"[AT3SmartControl] Status: active_zones={active_monitored_zones_count}, all_above_threshold={all_active_zones_above_threshold}, any_below_threshold={any_active_zone_below_threshold}")
+        _LOGGER.debug(f"[AT3SmartControl] Status: active_zones={active_controlled_zones_count}, all_above_threshold={all_active_zones_above_threshold}, any_below_threshold={any_controlled_zone_below_threshold}")
 
-        # RULE 3: When all currently switched on zones max temps are reached turn off the ac,
-        # and switch all initially active zones back into their original 'on' state
-        if all_active_zones_above_threshold and active_monitored_zones_count > 0:
-            _LOGGER.info(f"[AT3SmartControl] All active zones ({active_monitored_zones_count}) above temperature threshold, turning AC off and reactivating all initially active zones")
+        # Check current AC power state
+        ac_is_on = vzduch_api.power == 1
 
-            # First turn off the AC if it's on
-            if vzduch_api.power == 1:  # Only turn off if currently on
-                await hass.services.async_call(
-                    CLIMATE_DOMAIN,
-                    SERVICE_TURN_OFF,
-                    {"entity_id": climate_entity_id}
-                )
+        # RULE 3: When all currently switched on zones max temps are reached, turn off the AC,
+        # and turn on all controlled zones that are currently off
+        if all_active_zones_above_threshold and active_controlled_zones_count > 0 and ac_is_on:
+            _LOGGER.info(f"[AT3SmartControl] All active zones ({active_controlled_zones_count}) above temperature threshold, turning AC off")
 
-                # Notify user
-                if notify_service:
-                    try:
-                        await hass.services.async_call(
-                            "notify",
-                            notify_service,
-                            {
-                                "title": "AC Turned Off",
-                                "message": "AC turned off because all active zones have reached their max temperature threshold."
-                            }
-                        )
-                    except Exception as e:
-                        _LOGGER.warning(f"[AT3SmartControl] Failed to send notification: {e}")
+            # Turn off the AC
+            await hass.services.async_call(
+                CLIMATE_DOMAIN,
+                SERVICE_TURN_OFF,
+                {"entity_id": climate_entity_id}
+            )
 
-            # Then reactivate all initially active zones
-            for zone in vzduch_api.zones:
-                if zone.id in monitored_zone_ids and zone.status == 0:
-                    _LOGGER.info(f"[AT3SmartControl] Reactivating initially active zone {zone.name}")
-                    await vzduch_api.zone_switch(zone.id, 1)  # Switch zone on
+            # Notify user
+            if notify_service:
+                try:
+                    await hass.services.async_call(
+                        "notify",
+                        notify_service,
+                        {
+                            "title": "AC Turned Off",
+                            "message": "AC turned off because all active zones have reached their max temperature threshold."
+                        }
+                    )
+                except Exception as e:
+                    _LOGGER.warning(f"[AT3SmartControl] Failed to send notification: {e}")
 
-        # RULE 4: If any active zone drops 2 degrees below its desired temp, turn on the AC
-        elif any_active_zone_below_threshold and vzduch_api.power == 0:
-            _LOGGER.info(f"[AT3SmartControl] At least one active zone below threshold, turning AC on")
+        # RULE 4: If any controlled zone drops 2 degrees below its desired temp, turn on the AC
+        elif any_controlled_zone_below_threshold and not ac_is_on:
+            _LOGGER.info(f"[AT3SmartControl] At least one controlled zone below threshold, turning AC on")
             await hass.services.async_call(
                 CLIMATE_DOMAIN,
                 SERVICE_TURN_ON,
@@ -259,11 +267,24 @@ async def async_setup_services(hass: HomeAssistant):
                         notify_service,
                         {
                             "title": "AC Turned On",
-                            "message": "AC turned on because at least one active zone is below temperature threshold."
+                            "message": "AC turned on because at least one controlled zone is below temperature threshold."
                         }
                     )
                 except Exception as e:
                     _LOGGER.warning(f"[AT3SmartControl] Failed to send notification: {e}")
+
+        # RULE 5: When AC is off, make sure all controlled zones are turned on
+        # This ensures zones are ready for cooling/heating when AC turns on again
+        elif not ac_is_on:
+            zones_activated = 0
+            for zone in vzduch_api.zones:
+                if zone.id in controlled_zone_ids and zone.status == 0:
+                    _LOGGER.info(f"[AT3SmartControl] AC is off, activating controlled zone {zone.name}")
+                    await vzduch_api.zone_switch(zone.id, 1)  # Switch zone on
+                    zones_activated += 1
+
+            if zones_activated > 0:
+                _LOGGER.info(f"[AT3SmartControl] AC is off, activated {zones_activated} controlled zones")
 
         # Log total execution time
         execution_time = time.time() - start_time
