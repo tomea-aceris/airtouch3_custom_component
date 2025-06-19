@@ -21,7 +21,7 @@ except ImportError:
 
 _LOGGER = logging.getLogger(__name__)
 
-COMPONENT_TYPES = ["auto_switch", "climate", "sensor", "switch", "fan"]
+COMPONENT_TYPES = ["climate", "sensor", "switch", "fan"]
 
 async def async_setup(hass, config):
     """Connect to Airtouch3 Unit"""

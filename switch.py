@@ -123,3 +123,94 @@ class ZoneSwitch(ToggleEntity):
         """Toggle the entity."""
         _LOGGER.debug(f"[AT3Zone] async_toggle")
         await self._api.zone_toggle(self._zone.id)
+
+class AutoZoneSwitch(ToggleEntity):
+    """Dynamic AirTouch 3 Zone Switch."""
+
+    def __init__(self, api, zone_id):
+        """Initialize the zone."""
+        _LOGGER.debug(f"[AT3AutoSwitch] Zone ID Is {zone_id}")
+        zone_id_filter = filter(lambda x: x.id == zone_id, api.zones)
+
+        self._api = api
+        self._zone = next(zone_id_filter)
+
+    @property
+    def icon(self):
+        """Front End Icon"""
+        return ZONE_ICON
+
+    @property
+    def unique_id(self):
+        """Return a unique ID."""
+        return f"{self._api.airtouch_id}-{self._zone.id}-autoswitch"
+
+    @property
+    def name(self):
+        """Returns zone name"""
+        return f"{self._zone.name} Auto"
+
+    @property
+    def id(self):
+        """Returns zone id"""
+        return self._zone.id
+
+    @property
+    def status(self):
+        """Returns the zone status (on / off)"""
+        return self._zone.status
+
+    @property
+    def is_on(self):
+        """Return the state of the sensor."""
+        return self._zone.status == ZONE_ON
+
+    @property
+    def fan_value(self):
+        """Returns the fan % value"""
+        return self._zone.fan_value
+
+    @property
+    def is_spill(self):
+        """Returns whether zone is used as a spill."""
+        return self._zone.is_spill
+
+    @property
+    def extra_state_attributes(self):
+        """attributes for the zone"""
+        return {
+            "zone_temperature_type": self._zone.zone_temperature_type,
+            "fan_value": self._zone.fan_value,
+            "is_spill": self._zone.is_spill,
+            "id": self._zone.id,
+            "desired_temperature": self._zone.desired_temperature
+            }
+
+    @property
+    def zone_temperature_type(self):
+        """Return the zone temperature type."""
+        return self._zone.zone_temperature_type
+
+    @property
+    def zone_desired_temperature(self):
+        """Return the zone desired temperature."""
+        return self._zone.desired_temperature
+
+    async def async_update(self):
+        """Retrieve latest state."""
+        await self._api.async_update()
+
+    async def async_turn_on(self, **kwargs):
+        """Turn the entity on."""
+        _LOGGER.debug(f"[AT3AutoSwitch] Turning ON {self._zone.name}")
+        await self._api.zone_switch(self._zone.id, ZONE_ON)
+
+    async def async_turn_off(self, **kwargs):
+        """Turn the entity off."""
+        _LOGGER.debug(f"[AT3AutoSwitch] Turning OFF {self._zone.name}")
+        await self._api.zone_switch(self._zone.id, ZONE_OFF)
+
+    async def async_toggle(self, **kwargs):
+        """Toggle the entity."""
+        _LOGGER.debug(f"[AT3Zone] async_toggle")
+        await self._api.zone_toggle(self._zone.id)
