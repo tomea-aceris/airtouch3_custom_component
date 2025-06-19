@@ -22,8 +22,11 @@ SERVICE_TURN_OFF = "turn_off"
 # Default notification service - can be overridden in service call
 DEFAULT_NOTIFY_SERVICE = "mobile_app_tom_s_phone"
 
-# Auto switch identifier suffix in entity IDs
-AUTO_SWITCH_SUFFIX = "_auto"
+# Input boolean for main control switch
+AC_CONTROL_ACTIVE = "input_boolean.ac_control_active"
+
+# Input boolean prefix for zone controls
+ZONE_CONTROL_PREFIX = "input_boolean.at3_zone_"
 
 async def async_setup_services(hass: HomeAssistant):
     """Set up services for AirTouch3 smart control."""
@@ -37,6 +40,12 @@ async def async_setup_services(hass: HomeAssistant):
         # Get parameters from service call data with defaults
         climate_entity_id = call.data.get("climate_entity_id", None)
         notify_service = call.data.get("notify_service", DEFAULT_NOTIFY_SERVICE)
+
+        # Check if automation is active
+        automation_active = hass.states.get(AC_CONTROL_ACTIVE)
+        if not automation_active or automation_active.state != "on":
+            _LOGGER.debug(f"[AT3SmartControl] Smart control automation is not active")
+            return
 
         # If no climate entity ID was provided, try to find the AirTouch climate entity
         if not climate_entity_id:
@@ -85,36 +94,52 @@ async def async_setup_services(hass: HomeAssistant):
             # If no_throttle is not accepted, call without it
             await vzduch_api.async_update()
 
-        # Find all enabled auto switch entities
+        # Get all the AirTouch3 switch entities from the registry
         registry = er.async_get(hass)
-        auto_switch_entities = []
+        airtouch_switch_entities = {}
 
         for entity_id, entry in registry.entities.items():
-            if (entry.platform == AT3_DOMAIN and
-                    entry.domain == "switch" and
-                    entity_id.endswith(AUTO_SWITCH_SUFFIX)):
-                entity_state = hass.states.get(entity_id)
-                if entity_state and entity_state.state == "on":
-                    auto_switch_entities.append(entity_id)
-                    _LOGGER.debug(f"[AT3SmartControl] Found enabled auto switch: {entity_id}")
+            if entry.platform == AT3_DOMAIN and entry.domain == "switch":
+                # Extract the zone ID from the unique_id of the entity
+                # The unique_id format is typically "{airtouch_id}-{zone_id}-switch"
+                # We need to extract the zone_id part
+                parts = entry.unique_id.split('-')
+                if len(parts) >= 2:
+                    zone_id_str = parts[1]  # The zone ID part
+                    try:
+                        zone_id = int(zone_id_str)
+                        airtouch_switch_entities[zone_id] = entity_id
+                        _LOGGER.debug(f"[AT3SmartControl] Found AirTouch switch: {entity_id} for zone ID {zone_id}")
+                    except ValueError:
+                        _LOGGER.warning(f"[AT3SmartControl] Could not parse zone ID from {entry.unique_id}")
 
-        if not auto_switch_entities:
-            _LOGGER.warning(f"[AT3SmartControl] No enabled auto switches found. Smart control will not manage any zones.")
-            return
-
-        # Extract zone IDs from the auto switch entity IDs
+        # Find controlled zones based on input_boolean entities
         controlled_zone_ids = []
-        for entity_id in auto_switch_entities:
-            # Parse the zone ID from attributes
-            entity_state = hass.states.get(entity_id)
-            if entity_state and "id" in entity_state.attributes:
-                zone_id = entity_state.attributes["id"]
-                controlled_zone_ids.append(zone_id)
-                _LOGGER.debug(f"[AT3SmartControl] Zone ID {zone_id} will be controlled")
+
+        # Get all enabled zone control input_booleans
+        for entity_id in hass.states.async_entity_ids("input_boolean"):
+            if entity_id.startswith(ZONE_CONTROL_PREFIX) and hass.states.get(entity_id).state == "on":
+                # For each enabled input_boolean, find the corresponding zone
+                for zone in vzduch_api.zones:
+                    # If the zone's switch entity is found in the registry
+                    if zone.id in airtouch_switch_entities:
+                        # Extract identifier from input_boolean (e.g., "living_area" from "input_boolean.at3_zone_living_area")
+                        zone_identifier = entity_id.replace(ZONE_CONTROL_PREFIX, "")
+
+                        # Get the zone name in a format that matches our input_boolean naming
+                        zone_name_formatted = zone.name.lower().replace(' ', '_')
+
+                        # Compare formatted names or try alternate formats
+                        if (zone_identifier == zone_name_formatted or
+                                zone_identifier in zone_name_formatted or
+                                any(word in zone_identifier for word in zone_name_formatted.split('_'))):
+                            controlled_zone_ids.append(zone.id)
+                            _LOGGER.debug(f"[AT3SmartControl] Zone ID {zone.id} ({zone.name}) will be controlled by {entity_id}")
+                            break
 
         # Safety check - if no controlled zones, exit
         if not controlled_zone_ids:
-            _LOGGER.error(f"[AT3SmartControl] Could not determine zone IDs from auto switches. Cannot continue.")
+            _LOGGER.warning(f"[AT3SmartControl] No controlled zones found. Smart control will not manage any zones.")
             return
 
         # Track states for control logic
@@ -128,9 +153,9 @@ async def async_setup_services(hass: HomeAssistant):
 
         # Now process each controlled zone
         for zone in vzduch_api.zones:
-            # Only process zones that are controlled by auto switches
+            # Only process zones that are controlled by input_boolean toggles
             if zone.id not in controlled_zone_ids:
-                _LOGGER.debug(f"[AT3SmartControl] Ignoring zone {zone.name} as it's not controlled by an auto switch")
+                _LOGGER.debug(f"[AT3SmartControl] Ignoring zone {zone.name} as it's not controlled")
                 continue
 
             # Skip zones without sensors
@@ -144,7 +169,7 @@ async def async_setup_services(hass: HomeAssistant):
                 _LOGGER.debug(f"[AT3SmartControl] Zone {zone.name} has no temperature reading")
                 continue
 
-            # RULE 1: When a zone reaches 1 degree above the set desired temp, switch off the zone
+            # RULE 1: When a zone reaches TEMP_ABOVE_THRESHOLD degrees above the set desired temp, switch off the zone
             # BUT if it's the last active zone, don't turn it off - instead turn off the AC
             if zone_temp >= zone.desired_temperature + TEMP_ABOVE_THRESHOLD:
                 if zone.status == 1:  # Only switch off if currently on
@@ -170,7 +195,7 @@ async def async_setup_services(hass: HomeAssistant):
                             except Exception as e:
                                 _LOGGER.warning(f"[AT3SmartControl] Failed to send notification: {e}")
 
-            # RULE 2: When a zone temp drops 2 degrees below the set desired temp, switch on the zone
+            # RULE 2: When a zone temp drops TEMP_BELOW_THRESHOLD degrees below the set desired temp, switch on the zone
             elif zone_temp <= zone.desired_temperature - TEMP_BELOW_THRESHOLD:
                 if zone.status == 0:  # Only switch on if currently off
                     _LOGGER.info(f"[AT3SmartControl] Zone {zone.name} temp ({zone_temp}°C) is {TEMP_BELOW_THRESHOLD}° below desired, turning on")
