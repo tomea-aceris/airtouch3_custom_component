@@ -20,7 +20,7 @@ SERVICE_TURN_ON = "turn_on"
 SERVICE_TURN_OFF = "turn_off"
 
 # Default notification service - can be overridden in service call
-DEFAULT_NOTIFY_SERVICE = "mobile_app_toms_phone"
+DEFAULT_NOTIFY_SERVICE = "mobile_app_tom_s_phone"
 
 async def async_setup_services(hass: HomeAssistant):
     """Set up services for AirTouch3 smart control."""

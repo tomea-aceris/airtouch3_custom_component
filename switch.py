@@ -17,13 +17,22 @@ async def async_setup_entry(hass, entry, async_add_entities):
     vzduch_api = hass.data[AT3_DOMAIN].get(entry.entry_id)
     _LOGGER.debug(f"[AT3Zone] Init {vzduch_api.name}")
     zones = vzduch_api.zones
+    entities = []
+
     if zones:
-        async_add_entities(
-            [
-                ZoneSwitch(vzduch_api, zone.id)
-                for zone_index, zone in enumerate(zones)
-            ]
-        )
+        # Add regular zone switches
+        entities.extend([
+            ZoneSwitch(vzduch_api, zone.id)
+            for zone in zones
+        ])
+
+        # Add auto zone switches
+        entities.extend([
+            AutoZoneSwitch(vzduch_api, zone.id)
+            for zone in zones
+        ])
+
+        async_add_entities(entities)
 
 class ZoneSwitch(ToggleEntity):
     """AirTouch3 zone."""
