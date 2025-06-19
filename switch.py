@@ -157,7 +157,7 @@ class AutoZoneSwitch(ToggleEntity):
     @property
     def name(self):
         """Returns zone name"""
-        return f"{self._zone.name} Auto"
+        return f"Auto - {self._zone.name}"
 
     @property
     def id(self):
