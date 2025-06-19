@@ -108,25 +108,28 @@ async def async_setup_services(hass: HomeAssistant):
         # Track states for control logic
         any_active_zone_below_threshold = False  # Any zone 2+ degrees below desired temp
 
-        # First count all active zones to determine if any zone is the last active one
+        # First count all active monitored zones to determine if any zone is the last active one
         active_monitored_zones_count = 0
         for zone in vzduch_api.zones:
             if zone.id in monitored_zone_ids and zone.status == 1:
                 active_monitored_zones_count += 1
 
-        # Now process zone temperature rules
+        # Now process each zone that was initially active
         for zone in vzduch_api.zones:
             # Only process zones that were active when smart control was activated
             if zone.id not in monitored_zone_ids:
+                _LOGGER.debug(f"[AT3SmartControl] Ignoring zone {zone.name} as it wasn't active at smart control activation")
                 continue
 
             # Skip zones without sensors
             if not zone.sensors:
+                _LOGGER.debug(f"[AT3SmartControl] Zone {zone.name} has no sensors, skipping")
                 continue
 
             # Get temperature from the first sensor in the zone
             zone_temp = zone.sensors[0].temperature
             if zone_temp is None:
+                _LOGGER.debug(f"[AT3SmartControl] Zone {zone.name} has no temperature reading")
                 continue
 
             # RULE 1: When a zone reaches 1 degree above the set desired temp, switch off the zone
