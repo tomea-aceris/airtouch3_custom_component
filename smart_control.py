@@ -173,6 +173,9 @@ async def async_setup_services(hass: HomeAssistant):
             if zone.id in controlled_zone_ids and zone.status == 1:
                 active_controlled_zones_count += 1
 
+        # Check current AC power state
+        ac_is_on = vzduch_api.power == 1
+                
         # Now process each controlled zone
         for zone in vzduch_api.zones:
             # Only process zones that are controlled by input_boolean toggles
@@ -192,8 +195,8 @@ async def async_setup_services(hass: HomeAssistant):
                 continue
 
             # RULE 1: When a zone reaches 1 degree above the set desired temp, switch off the zone
-            # BUT if it's the last active zone, don't turn it off - instead turn off the AC
-            if zone_temp >= zone.desired_temperature + TEMP_ABOVE_THRESHOLD:
+            # BUT ONLY if the AC is on - if AC is already off, don't change zone state
+            if zone_temp >= zone.desired_temperature + TEMP_ABOVE_THRESHOLD and ac_is_on:
                 if zone.status == 1:  # Only switch off if currently on
                     # Check if this is the last active zone
                     if active_controlled_zones_count == 1:
@@ -218,6 +221,7 @@ async def async_setup_services(hass: HomeAssistant):
                                 _LOGGER.warning(f"[AT3SmartControl] Failed to send notification: {e}")
 
             # RULE 2: When a zone temp drops TEMP_BELOW_THRESHOLD degrees below the set desired temp, switch on the zone
+            # Always trigger this whether AC is on or not so we can track if any zone needs cooling
             elif zone_temp <= zone.desired_temperature - TEMP_BELOW_THRESHOLD:
                 if zone.status == 0:  # Only switch on if currently off
                     _LOGGER.info(f"[AT3SmartControl] Zone {zone.name} temp ({zone_temp}°C) is {TEMP_BELOW_THRESHOLD}° below desired, turning on")
@@ -267,9 +271,6 @@ async def async_setup_services(hass: HomeAssistant):
                     all_active_zones_above_threshold = False
 
         _LOGGER.debug(f"[AT3SmartControl] Status: active_zones={active_controlled_zones_count}, all_above_threshold={all_active_zones_above_threshold}, any_below_threshold={any_controlled_zone_below_threshold}")
-
-        # Check current AC power state
-        ac_is_on = vzduch_api.power == 1
 
         # RULE 3: When all currently switched on zones max temps are reached, turn off the AC,
         # and turn on all controlled zones that are currently off
@@ -322,9 +323,11 @@ async def async_setup_services(hass: HomeAssistant):
 
         # RULE 5: When AC is off, make sure all controlled zones are turned on
         # This ensures zones are ready for cooling/heating when AC turns on again
+        # But ONLY turn on zones that are currently off to avoid unnecessary toggling
         elif not ac_is_on:
             zones_activated = 0
             for zone in vzduch_api.zones:
+                # Only turn on zones that are currently off to avoid unnecessary toggling
                 if zone.id in controlled_zone_ids and zone.status == 0:
                     _LOGGER.info(f"[AT3SmartControl] AC is off, activating controlled zone {zone.name}")
                     await vzduch_api.zone_switch(zone.id, 1)  # Switch zone on
