@@ -12,7 +12,7 @@ _LOGGER = logging.getLogger(__name__)
 
 # Constants for the control logic
 TEMP_ABOVE_THRESHOLD = 1  # Degrees above set temp to turn off zone
-TEMP_BELOW_THRESHOLD = 2  # Degrees below set temp to turn on zone
+TEMP_BELOW_THRESHOLD = 1  # Degrees below set temp to turn on zone
 
 # Climate domain and services
 CLIMATE_DOMAIN = "climate"
