@@ -206,6 +206,8 @@ async def async_setup_services(hass: HomeAssistant):
                         _LOGGER.info(f"[AT3SmartControl] Zone {zone.name} temp ({zone_temp}°C) is {TEMP_ABOVE_THRESHOLD}° above desired, turning off")
                         await vzduch_api.zone_switch(zone.id, 0)  # Switch zone off
 
+                        active_controlled_zones_count -= 1
+
                         # Notify user
                         if notify_service:
                             try:
@@ -226,6 +228,8 @@ async def async_setup_services(hass: HomeAssistant):
                 if zone.status == 0:  # Only switch on if currently off
                     _LOGGER.info(f"[AT3SmartControl] Zone {zone.name} temp ({zone_temp}°C) is {TEMP_BELOW_THRESHOLD}° below desired, turning on")
                     await vzduch_api.zone_switch(zone.id, 1)  # Switch zone on
+
+                    active_controlled_zones_count += 1
 
                     # Notify user
                     if notify_service:
